@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>WebAR - Solution Nikolai Warner</title>
+  <title>WebAR - Auto Format & Loop</title>
 
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
@@ -16,7 +16,7 @@
       background: rgba(0,0,0,0.9); z-index: 999;
       display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
-    #status { color: #fff; margin-bottom: 20px; text-align: center; }
+    #status { color: #fff; margin-bottom: 20px; text-align: center; padding: 0 20px;}
     #start-btn {
       padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
       color: white; background: #00D084; border: none; border-radius: 5px; 
@@ -27,8 +27,7 @@
 
   <script>
     // =================================================================
-    // SHADER CHROMAKEY (Basé sur Nikolai Warner)
-    // Source: https://github.com/nikolaiwarner/aframe-chromakey-material
+    // SHADER CHROMAKEY (Nikolai Warner - Version Optimisée)
     // =================================================================
     AFRAME.registerShader('chromakey', {
       schema: {
@@ -66,10 +65,8 @@
             void main() {
               vec4 tex = texture2D(src, vUv);
               vec3 tColor = tex.rgb;
-              
-              // Formule de Nikolai Warner pour la transparence
+              // Calcul de transparence
               float alpha = (length(tColor - color) - 0.5) * 7.0;
-              
               gl_FragColor = vec4(tColor, alpha);
             }
           `,
@@ -79,7 +76,6 @@
 
       update: function (data) {
         this.material.uniforms.color.value.setRGB(data.color.x, data.color.y, data.color.z);
-        // Note: On ne met pas à jour 'src' ici car VideoTexture est géré par référence
       }
     });
 
@@ -95,7 +91,8 @@
         el.addEventListener('targetFound', () => {
           if (this.video) this.video.play();
           if (this.audio) {
-            this.audio.currentTime = 0;
+            // Rembobine l'audio pour qu'il reprenne du début à chaque fois (optionnel, sinon retirer la ligne)
+            // this.audio.currentTime = 0; 
             this.audio.play();
           }
         });
@@ -129,7 +126,7 @@
   </a-scene>
 
   <script>
-    const MAX_TARGETS = 5; 
+    const MAX_TARGETS = 10; 
     const ASSETS_PATH = './assets/';
     const assetsContainer = document.getElementById('assets-loader');
     const targetsContainer = document.getElementById('targets-container');
@@ -155,11 +152,11 @@
         const targetEl = document.createElement('a-entity');
         targetEl.setAttribute('mindar-image-target', `targetIndex: ${i}`);
         
-        // --- 1. VIDEO (MP4) ---
+        // --- 1. VIDEO (AUTO-FORMAT) ---
         if (hasMp4) {
           const vidId = `video-${i}`;
           
-          // Création propre de la balise vidéo
+          // Création vidéo
           const video = document.createElement('video');
           video.id = vidId;
           video.src = `${ASSETS_PATH}${i}.mp4`;
@@ -174,24 +171,45 @@
           
           targetEl.dataset.videoId = vidId;
 
-          // Création du plan avec le shader Nikolai
+          // Création du plan avec géométrie par défaut (16:9)
           const videoPlane = document.createElement('a-entity');
           videoPlane.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56');
           videoPlane.setAttribute('position', '0 0 0');
-          
-          // IMPORTANT : On passe l'élément DOM vidéo direct dans src
-          // Nikolai utilise un vec3 pour la couleur (0.1 0.9 0.2 par défaut)
-          // Tu peux ajuster 'color' ici si ton fond est différent
           videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0 1 0; transparent: true`);
           
           targetEl.appendChild(videoPlane);
+
+          // === NOUVELLE FONCTION : DÉTECTION DU FORMAT ===
+          // Dès que la vidéo charge ses métadonnées (taille), on recalcule la géométrie
+          video.addEventListener('loadedmetadata', () => {
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            
+            if(videoWidth && videoHeight) {
+              // On garde une largeur fixe de 1 unité AR
+              // On calcule la hauteur proportionnelle
+              const newHeight = videoHeight / videoWidth;
+              
+              videoPlane.setAttribute('geometry', {
+                primitive: 'plane',
+                width: 1,
+                height: newHeight
+              });
+              
+              console.log(`Video ${i} redimensionnée : Ratio ${newHeight} (Original: ${videoWidth}x${videoHeight})`);
+            }
+          });
         }
 
-        // --- 2. AUDIO ---
+        // --- 2. AUDIO (LOOP ACTIVÉ) ---
         if (hasMp3) {
           const audio = document.createElement('audio');
           audio.id = `audio-${i}`;
           audio.src = `${ASSETS_PATH}${i}.mp3`;
+          
+          // === NOUVELLE FONCTION : LOOP ===
+          audio.setAttribute('loop', 'true'); // L'audio bouclera indéfiniment
+          
           assetsContainer.appendChild(audio);
           targetEl.dataset.audioId = audio.id;
         }
