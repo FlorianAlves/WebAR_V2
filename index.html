@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>WebAR - Auto Format & Loop</title>
+  <meta name="power-preference" content="high-performance">
+  <title>WebAR - Optimized</title>
 
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
@@ -15,19 +16,21 @@
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(0,0,0,0.9); z-index: 999;
       display: flex; flex-direction: column; justify-content: center; align-items: center;
+      transition: opacity 0.3s ease-out;
     }
     #status { color: #fff; margin-bottom: 20px; text-align: center; padding: 0 20px;}
     #start-btn {
       padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
       color: white; background: #00D084; border: none; border-radius: 5px; 
       cursor: pointer; display: none;
+      box-shadow: 0 0 10px rgba(0, 208, 132, 0.5);
     }
-    .hidden { display: none !important; }
+    .hidden { opacity: 0; pointer-events: none; }
   </style>
 
   <script>
     // =================================================================
-    // SHADER CHROMAKEY (Nikolai Warner - Version Optimisée)
+    // SHADER CHROMAKEY OPTIMISÉ
     // =================================================================
     AFRAME.registerShader('chromakey', {
       schema: {
@@ -39,16 +42,13 @@
       init: function (data) {
         var videoTexture = new THREE.VideoTexture(data.src);
         videoTexture.minFilter = THREE.LinearFilter;
+        // Optimisation : Format RGBA direct pour éviter les conversions
+        videoTexture.format = THREE.RGBAFormat; 
+        
         this.material = new THREE.ShaderMaterial({
           uniforms: {
-            color: {
-              type: 'c',
-              value: new THREE.Color(data.color.x, data.color.y, data.color.z)
-            },
-            src: {
-              type: 't',
-              value: videoTexture
-            }
+            color: { type: 'c', value: new THREE.Color(data.color.x, data.color.y, data.color.z) },
+            src: { type: 't', value: videoTexture }
           },
           vertexShader: `
             varying vec2 vUv;
@@ -58,19 +58,20 @@
             }
           `,
           fragmentShader: `
+            // Optimisation : Précision moyenne suffisante pour de la vidéo
+            precision mediump float; 
             uniform vec3 color;
             uniform sampler2D src;
             varying vec2 vUv;
             
             void main() {
               vec4 tex = texture2D(src, vUv);
-              vec3 tColor = tex.rgb;
-              // Calcul de transparence
-              float alpha = (length(tColor - color) - 0.5) * 7.0;
-              gl_FragColor = vec4(tColor, alpha);
+              float alpha = (length(tex.rgb - color) - 0.5) * 7.0;
+              gl_FragColor = vec4(tex.rgb, alpha);
             }
           `,
-          transparent: data.transparent
+          transparent: data.transparent,
+          side: THREE.FrontSide // Optimisation : On ne dessine que la face avant
         });
       },
 
@@ -80,26 +81,35 @@
     });
 
     // =================================================================
-    // COMPOSANT DE CONTROLE
+    // COMPOSANT DE CONTROLE (PERFORMANCE)
     // =================================================================
     AFRAME.registerComponent('smart-target', {
       init: function() {
         const el = this.el;
+        // Mise en cache des références DOM pour éviter les querySelector en boucle
         this.video = el.dataset.videoId ? document.getElementById(el.dataset.videoId) : null;
         this.audio = el.dataset.audioId ? document.getElementById(el.dataset.audioId) : null;
 
         el.addEventListener('targetFound', () => {
-          if (this.video) this.video.play();
+          // Lancement vidéo
+          if (this.video) {
+            this.video.style.display = 'block'; // Hack pour forcer le réveil sur certains Android
+            this.video.play();
+          }
+          // Lancement Audio
           if (this.audio) {
-            // Rembobine l'audio pour qu'il reprenne du début à chaque fois (optionnel, sinon retirer la ligne)
-            // this.audio.currentTime = 0; 
             this.audio.play();
           }
         });
 
         el.addEventListener('targetLost', () => {
-          if (this.video) this.video.pause();
-          if (this.audio) this.audio.pause();
+          // Pause immédiate pour économiser le CPU
+          if (this.video) {
+            this.video.pause();
+          }
+          if (this.audio) {
+            this.audio.pause();
+          }
         });
       }
     });
@@ -108,19 +118,21 @@
 
 <body>
   <div id="overlay">
-    <div id="status">Chargement...</div>
+    <div id="status">Chargement optimisé...</div>
     <button id="start-btn">DÉMARRER</button>
   </div>
 
   <a-scene 
-    mindar-image="imageTargetSrc: ./assets/targets.mind; uiScanning: yes;" 
+    mindar-image="imageTargetSrc: ./assets/targets.mind; uiScanning: yes; maxTrack: 1; filterMinCF:0.0001; filterBeta: 0.001;" 
     color-space="sRGB" 
-    renderer="colorManagement: true, physicallyCorrectLights" 
+    renderer="colorManagement: true; physicallyCorrectLights: false; antialias: false; sortObjects: true; precision: mediump;" 
     vr-mode-ui="enabled: false" 
     device-orientation-permission-ui="enabled: false">
 
-    <a-assets id="assets-loader"></a-assets>
-    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    <a-assets id="assets-loader" timeout="10000"></a-assets>
+    
+    <a-camera position="0 0 0" look-controls="enabled: false" wasd-controls="enabled: false"></a-camera>
+    
     <a-entity id="targets-container"></a-entity>
 
   </a-scene>
@@ -133,12 +145,28 @@
     const startBtn = document.getElementById('start-btn');
     const statusText = document.getElementById('status');
 
+    // Fonction de cache simple pour éviter les requêtes réseau multiples
+    const cache = {};
+
     async function checkFileExists(url) {
-      try { return (await fetch(url, { method: 'HEAD' })).ok; } catch { return false; }
+      if (cache[url] !== undefined) return cache[url];
+      try { 
+        const res = await fetch(url, { method: 'HEAD' });
+        cache[url] = res.ok;
+        return res.ok;
+      } catch { 
+        cache[url] = false;
+        return false; 
+      }
     }
 
     async function initExperience() {
       let count = 0;
+      
+      // Fragment de document pour n'écrire dans le DOM qu'une seule fois à la fin (Performance)
+      const docFragAssets = document.createDocumentFragment();
+      const docFragTargets = document.createDocumentFragment();
+
       for (let i = 0; i < MAX_TARGETS; i++) {
         const [hasGlb, hasMp3, hasMp4] = await Promise.all([
           checkFileExists(`${ASSETS_PATH}${i}.glb`),
@@ -152,11 +180,9 @@
         const targetEl = document.createElement('a-entity');
         targetEl.setAttribute('mindar-image-target', `targetIndex: ${i}`);
         
-        // --- 1. VIDEO (AUTO-FORMAT) ---
+        // 1. VIDEO
         if (hasMp4) {
           const vidId = `video-${i}`;
-          
-          // Création vidéo
           const video = document.createElement('video');
           video.id = vidId;
           video.src = `${ASSETS_PATH}${i}.mp4`;
@@ -167,11 +193,12 @@
           video.setAttribute('webkit-playsinline', '');
           video.muted = true; 
           video.setAttribute('muted', '');
-          assetsContainer.appendChild(video);
+          // Astuce Perf : display none pour éviter le reflow, mais attention sur certains Android
+          // On le gère via CSS ou JS si besoin
           
+          docFragAssets.appendChild(video);
           targetEl.dataset.videoId = vidId;
 
-          // Création du plan avec géométrie par défaut (16:9)
           const videoPlane = document.createElement('a-entity');
           videoPlane.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56');
           videoPlane.setAttribute('position', '0 0 0');
@@ -179,42 +206,24 @@
           
           targetEl.appendChild(videoPlane);
 
-          // === NOUVELLE FONCTION : DÉTECTION DU FORMAT ===
-          // Dès que la vidéo charge ses métadonnées (taille), on recalcule la géométrie
+          // Écouteur Optimisé : on supprime l'event listener après usage (once: true)
           video.addEventListener('loadedmetadata', () => {
-            const videoWidth = video.videoWidth;
-            const videoHeight = video.videoHeight;
-            
-            if(videoWidth && videoHeight) {
-              // On garde une largeur fixe de 1 unité AR
-              // On calcule la hauteur proportionnelle
-              const newHeight = videoHeight / videoWidth;
-              
-              videoPlane.setAttribute('geometry', {
-                primitive: 'plane',
-                width: 1,
-                height: newHeight
-              });
-              
-              console.log(`Video ${i} redimensionnée : Ratio ${newHeight} (Original: ${videoWidth}x${videoHeight})`);
-            }
-          });
+             const newHeight = video.videoHeight / video.videoWidth;
+             videoPlane.setAttribute('geometry', {primitive: 'plane', width: 1, height: newHeight});
+          }, { once: true });
         }
 
-        // --- 2. AUDIO (LOOP ACTIVÉ) ---
+        // 2. AUDIO
         if (hasMp3) {
           const audio = document.createElement('audio');
           audio.id = `audio-${i}`;
           audio.src = `${ASSETS_PATH}${i}.mp3`;
-          
-          // === NOUVELLE FONCTION : LOOP ===
-          audio.setAttribute('loop', 'true'); // L'audio bouclera indéfiniment
-          
-          assetsContainer.appendChild(audio);
+          audio.setAttribute('loop', 'true');
+          docFragAssets.appendChild(audio);
           targetEl.dataset.audioId = audio.id;
         }
 
-        // --- 3. GLB ---
+        // 3. GLB
         if (hasGlb) {
           const model = document.createElement('a-entity');
           model.setAttribute('gltf-model', `${ASSETS_PATH}${i}.glb`);
@@ -224,8 +233,12 @@
         }
 
         targetEl.setAttribute('smart-target', '');
-        targetsContainer.appendChild(targetEl);
+        docFragTargets.appendChild(targetEl);
       }
+
+      // Injection unique dans le DOM (Meilleure performance)
+      assetsContainer.appendChild(docFragAssets);
+      targetsContainer.appendChild(docFragTargets);
 
       statusText.innerText = count > 0 ? "Prêt. Cliquez pour démarrer." : "Aucun asset trouvé.";
       if (count > 0) startBtn.style.display = 'block';
@@ -238,7 +251,11 @@
       
       const vids = document.querySelectorAll('video');
       vids.forEach(v => {
-        v.play().then(() => v.pause()).catch(e => console.error(e));
+        // Promise chain pour éviter les erreurs de race condition
+        const p = v.play();
+        if(p !== undefined) {
+            p.then(() => v.pause()).catch(e => console.error(e));
+        }
       });
 
       const arSys = document.querySelector('a-scene').systems['mindar-image-system'];
