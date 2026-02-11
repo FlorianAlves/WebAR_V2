@@ -182,7 +182,7 @@
           // IMPORTANT : On passe l'élément DOM vidéo direct dans src
           // Nikolai utilise un vec3 pour la couleur (0.1 0.9 0.2 par défaut)
           // Tu peux ajuster 'color' ici si ton fond est différent
-          videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0.1 0.9 0.2; transparent: true`);
+          videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0 1 0; transparent: true`);
           
           targetEl.appendChild(videoPlane);
         }
