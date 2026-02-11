@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>WebAR Android Debug</title>
+  <title>WebAR - Solution Nikolai Warner</title>
 
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
@@ -16,7 +16,7 @@
       background: rgba(0,0,0,0.9); z-index: 999;
       display: flex; flex-direction: column; justify-content: center; align-items: center;
     }
-    #status { color: #fff; margin-bottom: 20px; text-align: center; padding: 0 20px;}
+    #status { color: #fff; margin-bottom: 20px; text-align: center; }
     #start-btn {
       padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
       color: white; background: #00D084; border: none; border-radius: 5px; 
@@ -26,52 +26,66 @@
   </style>
 
   <script>
-    // 1. SHADER CHROMAKEY (Version simplifiée et robuste)
+    // =================================================================
+    // SHADER CHROMAKEY (Basé sur Nikolai Warner)
+    // Source: https://github.com/nikolaiwarner/aframe-chromakey-material
+    // =================================================================
     AFRAME.registerShader('chromakey', {
       schema: {
-        src: {type: 'map'},
-        color: {default: {x: 0.0, y: 1.0, z: 0.0}, type: 'vec3', is: 'uniform'},
-        threshold: {default: 0.1, type: 'float', is: 'uniform'}
+        src: {type: 'map', is: 'uniform'},
+        color: {default: {x: 0.1, y: 0.9, z: 0.2}, type: 'vec3', is: 'uniform'},
+        transparent: {default: true, is: 'uniform'}
       },
+
       init: function (data) {
+        var videoTexture = new THREE.VideoTexture(data.src);
+        videoTexture.minFilter = THREE.LinearFilter;
         this.material = new THREE.ShaderMaterial({
           uniforms: {
-            texture: {type: 't', value: undefined},
-            color: {type: 'c', value: new THREE.Color(data.color.x, data.color.y, data.color.z)},
-            threshold: {type: 'f', value: data.threshold}
+            color: {
+              type: 'c',
+              value: new THREE.Color(data.color.x, data.color.y, data.color.z)
+            },
+            src: {
+              type: 't',
+              value: videoTexture
+            }
           },
           vertexShader: `
             varying vec2 vUv;
-            void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-          `,
-          fragmentShader: `
-            precision mediump float;
-            uniform sampler2D texture;
-            uniform vec3 color;
-            uniform float threshold;
-            varying vec2 vUv;
             void main() {
-              vec4 tex = texture2D(texture, vUv);
-              float dist = distance(tex.rgb, color);
-              // Si la distance est inférieure au seuil, alpha = 0.
-              float alpha = smoothstep(threshold - 0.05, threshold + 0.05, dist);
-              gl_FragColor = vec4(tex.rgb, tex.a * alpha);
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
           `,
-          transparent: true,
-          side: THREE.DoubleSide
+          fragmentShader: `
+            uniform vec3 color;
+            uniform sampler2D src;
+            varying vec2 vUv;
+            
+            void main() {
+              vec4 tex = texture2D(src, vUv);
+              vec3 tColor = tex.rgb;
+              
+              // Formule de Nikolai Warner pour la transparence
+              float alpha = (length(tColor - color) - 0.5) * 7.0;
+              
+              gl_FragColor = vec4(tColor, alpha);
+            }
+          `,
+          transparent: data.transparent
         });
       },
+
       update: function (data) {
         this.material.uniforms.color.value.setRGB(data.color.x, data.color.y, data.color.z);
-        this.material.uniforms.threshold.value = data.threshold;
-        if (data.src) {
-          this.material.uniforms.texture.value = data.src;
-        }
+        // Note: On ne met pas à jour 'src' ici car VideoTexture est géré par référence
       }
     });
 
-    // 2. CONTROLLEUR PRINCIPAL
+    // =================================================================
+    // COMPOSANT DE CONTROLE
+    // =================================================================
     AFRAME.registerComponent('smart-target', {
       init: function() {
         const el = this.el;
@@ -79,9 +93,7 @@
         this.audio = el.dataset.audioId ? document.getElementById(el.dataset.audioId) : null;
 
         el.addEventListener('targetFound', () => {
-          if (this.video) {
-            this.video.play();
-          }
+          if (this.video) this.video.play();
           if (this.audio) {
             this.audio.currentTime = 0;
             this.audio.play();
@@ -100,7 +112,7 @@
 <body>
   <div id="overlay">
     <div id="status">Chargement...</div>
-    <button id="start-btn">LANCER L'EXPÉRIENCE</button>
+    <button id="start-btn">DÉMARRER</button>
   </div>
 
   <a-scene 
@@ -117,7 +129,7 @@
   </a-scene>
 
   <script>
-    const MAX_TARGETS = 5; // Réduit pour le test
+    const MAX_TARGETS = 5; 
     const ASSETS_PATH = './assets/';
     const assetsContainer = document.getElementById('assets-loader');
     const targetsContainer = document.getElementById('targets-container');
@@ -143,11 +155,11 @@
         const targetEl = document.createElement('a-entity');
         targetEl.setAttribute('mindar-image-target', `targetIndex: ${i}`);
         
-        // --- VIDEO SETUP ---
+        // --- 1. VIDEO (MP4) ---
         if (hasMp4) {
           const vidId = `video-${i}`;
           
-          // 1. Création balise vidéo avec TOUS les attributs requis pour Android
+          // Création propre de la balise vidéo
           const video = document.createElement('video');
           video.id = vidId;
           video.src = `${ASSETS_PATH}${i}.mp4`;
@@ -156,32 +168,26 @@
           video.setAttribute('crossorigin', 'anonymous');
           video.setAttribute('playsinline', '');
           video.setAttribute('webkit-playsinline', '');
-          video.muted = true; // Propriété JS
-          video.setAttribute('muted', ''); // Attribut HTML
+          video.muted = true; 
+          video.setAttribute('muted', '');
           assetsContainer.appendChild(video);
           
           targetEl.dataset.videoId = vidId;
 
-          // 2. PLAN DE DEBUG (ROUGE)
-          // Si tu vois ça, c'est que la position est bonne mais la vidéo est transparente/invisible
-          const debugPlane = document.createElement('a-plane');
-          debugPlane.setAttribute('color', 'red');
-          debugPlane.setAttribute('width', '1.1');
-          debugPlane.setAttribute('height', '0.66');
-          debugPlane.setAttribute('position', '0 0 -0.01'); // Juste derrière
-          targetEl.appendChild(debugPlane);
-
-          // 3. PLAN VIDEO
+          // Création du plan avec le shader Nikolai
           const videoPlane = document.createElement('a-entity');
           videoPlane.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56');
-          videoPlane.setAttribute('position', '0 0 0.05'); // Un peu devant le debug
-          // Note l'utilisation simple de src qui pointe vers l'ID
-          videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0 1 0; threshold: 0.1; smoothness: 0.05;`);
+          videoPlane.setAttribute('position', '0 0 0');
+          
+          // IMPORTANT : On passe l'élément DOM vidéo direct dans src
+          // Nikolai utilise un vec3 pour la couleur (0.1 0.9 0.2 par défaut)
+          // Tu peux ajuster 'color' ici si ton fond est différent
+          videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0.1 0.9 0.2; transparent: true`);
           
           targetEl.appendChild(videoPlane);
         }
 
-        // --- AUDIO ---
+        // --- 2. AUDIO ---
         if (hasMp3) {
           const audio = document.createElement('audio');
           audio.id = `audio-${i}`;
@@ -190,7 +196,7 @@
           targetEl.dataset.audioId = audio.id;
         }
 
-        // --- GLB ---
+        // --- 3. GLB ---
         if (hasGlb) {
           const model = document.createElement('a-entity');
           model.setAttribute('gltf-model', `${ASSETS_PATH}${i}.glb`);
@@ -212,21 +218,13 @@
     startBtn.addEventListener('click', () => {
       document.getElementById('overlay').classList.add('hidden');
       
-      // DEBLOCAGE FORCE : On joue tout, tout de suite
       const vids = document.querySelectorAll('video');
       vids.forEach(v => {
-        v.play().then(() => {
-          v.pause();
-        }).catch(e => {
-          console.error("Erreur lecture vidéo:", e);
-          statusText.innerText = "Erreur Vidéo: " + e.message;
-        });
+        v.play().then(() => v.pause()).catch(e => console.error(e));
       });
 
-      const audios = document.querySelectorAll('audio');
-      audios.forEach(a => { a.play().then(() => { a.pause(); a.currentTime = 0; }); });
-
-      document.querySelector('a-scene').systems['mindar-image-system'].start();
+      const arSys = document.querySelector('a-scene').systems['mindar-image-system'];
+      if(arSys) arSys.start();
     });
   </script>
 </body>
