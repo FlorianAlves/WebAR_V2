@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebAR Multi-Cibles Optimisé</title>
+
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.0.0/dist/aframe-extras.min.js"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    
+    /* UI Overlay */
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85); z-index: 999;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      transition: opacity 0.5s;
+    }
+    #start-btn {
+      padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
+      color: white; background: linear-gradient(45deg, #ff0055, #ff5500);
+      border: none; border-radius: 30px; cursor: pointer; text-transform: uppercase;
+      box-shadow: 0 4px 15px rgba(255, 0, 85, 0.4);
+    }
+    .hidden { opacity: 0; pointer-events: none; }
+  </style>
+
+  <script>
+    // --- 1. SHADER CHROMAKEY (FOND VERT) ---
+    // Ce shader remplace le vert pur par de la transparence directement sur le GPU.
+    AFRAME.registerShader('chromakey', {
+      schema: {
+        src: {type: 'map'},
+        color: {default: {x: 0.0, y: 1.0, z: 0.0}, type: 'vec3', is: 'uniform'}, // Le vert (#00FF00)
+        transparent: {default: true, is: 'uniform'},
+        threshold: {default: 0.1, type: 'float', is: 'uniform'}, // Tolérance de couleur
+        smoothness: {default: 0.1, type: 'float', is: 'uniform'} // Adoucissement des bords
+      },
+      init: function (data) {
+        this.material = new THREE.ShaderMaterial({
+          uniforms: {
+            texture: {type: 't', value: undefined},
+            color: {type: 'c', value: new THREE.Color(data.color.x, data.color.y, data.color.z)},
+            threshold: {type: 'f', value: data.threshold},
+            smoothness: {type: 'f', value: data.smoothness}
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D texture;
+            uniform vec3 color;
+            uniform float threshold;
+            uniform float smoothness;
+            varying vec2 vUv;
+            void main() {
+              vec4 tex = texture2D(texture, vUv);
+              // Calcul de la distance entre la couleur du pixel et la couleur clé (vert)
+              float dist = distance(tex.rgb, color);
+              
+              // Si c'est proche du vert, on rend transparent (alpha = 0)
+              float alpha = smoothstep(threshold, threshold + smoothness, dist);
+              
+              gl_FragColor = vec4(tex.rgb, tex.a * alpha);
+            }
+          `,
+          transparent: true
+        });
+        this.update(data);
+      },
+      update: function (data) {
+        this.material.uniforms.texture.value = data.src;
+        this.material.uniforms.color.value.setRGB(data.color.x, data.color.y, data.color.z);
+        this.material.uniforms.threshold.value = data.threshold;
+        this.material.uniforms.smoothness.value = data.smoothness;
+      }
+    });
+
+    // --- 2. CONTROLEUR MULTI-CIBLES ---
+    // Gère lecture/pause pour chaque cible indépendamment
+    AFRAME.registerComponent('target-control', {
+      schema: {
+        video: {type: 'string', default: ''},
+        audio: {type: 'string', default: ''}
+      },
+      init: function() {
+        const el = this.el;
+        this.videoEl = this.data.video ? document.querySelector(this.data.video) : null;
+        this.audioEl = this.data.audio ? document.querySelector(this.data.audio) : null;
+
+        // Cible trouvée
+        el.addEventListener('targetFound', () => {
+          console.log("Cible trouvée :", el.id);
+          if(this.videoEl) this.videoEl.play();
+          if(this.audioEl) this.audioEl.play();
+          el.setAttribute('visible', true);
+        });
+
+        // Cible perdue
+        el.addEventListener('targetLost', () => {
+          console.log("Cible perdue :", el.id);
+          if(this.videoEl) {
+            this.videoEl.pause();
+            this.videoEl.currentTime = 0; // Reset au début (optionnel)
+          }
+          if(this.audioEl) {
+            this.audioEl.pause();
+            this.audioEl.currentTime = 0;
+          }
+          el.setAttribute('visible', false);
+        });
+      }
+    });
+  </script>
+</head>
+
+<body>
+
+  <div id="overlay">
+    <button id="start-btn">Lancer l'expérience AR</button>
+  </div>
+
+  <a-scene 
+    mindar-image="imageTargetSrc: ./assets/targets.mind; uiScanning: yes;" 
+    color-space="sRGB" 
+    renderer="colorManagement: true, physicallyCorrectLights" 
+    vr-mode-ui="enabled: false" 
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <a-asset-item id="model-robot" src="./assets/target0/robot.glb"></a-asset-item>
+      <audio id="audio-robot" src="./assets/target0/presentation.mp3" preload="auto"></audio>
+
+      <video id="vid-green" src="./assets/target1/explication-fond-vert.mp4" 
+             preload="auto" loop="true" playsinline webkit-playsinline muted crossorigin="anonymous"></video>
+      <audio id="audio-poster" src="./assets/target1/ambiance.mp3" preload="auto"></audio>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity 
+      mindar-image-target="targetIndex: 0" 
+      id="target-0-robot"
+      target-control="audio: #audio-robot">
+      
+      <a-entity 
+        gltf-model="#model-robot" 
+        rotation="0 0 0" 
+        position="0 0 0" 
+        scale="0.5 0.5 0.5" 
+        animation-mixer> </a-entity>
+      
+    </a-entity>
+
+
+    <a-entity 
+      mindar-image-target="targetIndex: 1" 
+      id="target-1-poster"
+      target-control="video: #vid-green; audio: #audio-poster">
+      
+      <a-entity 
+        geometry="primitive: plane; width: 1; height: 0.56" 
+        position="0 0 0" 
+        rotation="0 0 0"
+        material="shader: chromakey; src: #vid-green; color: 0 1 0; threshold: 0.15; smoothness: 0.05;">
+      </a-entity>
+
+    </a-entity>
+
+  </a-scene>
+
+  <script>
+    const startBtn = document.getElementById('start-btn');
+    const overlay = document.getElementById('overlay');
+    const scene = document.querySelector('a-scene');
+
+    startBtn.addEventListener('click', () => {
+      // 1. Cacher l'overlay
+      overlay.classList.add('hidden');
+      
+      // 2. Débloquer tous les sons et vidéos (hack iOS)
+      const sounds = document.querySelectorAll('audio, video');
+      sounds.forEach(media => {
+        media.play().then(() => {
+          media.pause();
+          media.currentTime = 0;
+        }).catch(err => console.log("Erreur init media:", err));
+      });
+
+      // 3. Démarrer MindAR
+      scene.systems['mindar-image-system'].start();
+    });
+  </script>
+
+</body>
+</html>
