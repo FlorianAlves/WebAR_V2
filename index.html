@@ -176,7 +176,7 @@
           videoPlane.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56');
           videoPlane.setAttribute('position', '0 0 0.05'); // Un peu devant le debug
           // Note l'utilisation simple de src qui pointe vers l'ID
-          videoPlane.setAttribute('material', `shader: flat; src: #${vidId};`);
+          videoPlane.setAttribute('material', `shader: chromakey; src: #${vidId}; color: 0 1 0; threshold: 0.1; smoothness: 0.05;`);
           
           targetEl.appendChild(videoPlane);
         }
