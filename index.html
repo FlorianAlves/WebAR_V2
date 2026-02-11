@@ -216,8 +216,10 @@
           // Créer le plan dans la scène
           const planeEl = document.createElement('a-entity');
           planeEl.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56'); // Ratio 16:9 par défaut
-          // On applique le shader chromakey
-          planeEl.setAttribute('material', `shader: chromakey; src: #${videoId}; color: 0 1 0;`);
+          // --- MODIFICATION TEMPORAIRE POUR TESTER ---
+	  // On remplace le shader chromakey par un shader 'flat' standard
+	  // planeEl.setAttribute('material', `shader: chromakey; src: #${videoId}; color: 0 1 0;`); 
+	  planeEl.setAttribute('material', `shader: flat; src: #${videoId};`);
           targetEl.appendChild(planeEl);
         }
 
