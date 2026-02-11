@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebAR Auto-Détection Optimisée</title>
+  <title>WebAR Android Fix</title>
 
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
@@ -11,36 +11,30 @@
 
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; }
-    
-    /* Interface utilisateur (Overlay) */
     #overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.85); z-index: 999;
+      background: rgba(0,0,0,0.9); z-index: 999;
       display: flex; flex-direction: column; justify-content: center; align-items: center;
-      transition: opacity 0.5s;
     }
-    #loading { color: #ffffff; margin-top: 15px; font-size: 1rem; font-style: italic; }
+    #loading { color: #fff; margin-top: 15px; font-size: 1rem; }
     #start-btn {
       padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
-      color: white; background: linear-gradient(45deg, #ff0055, #ff5500);
-      border: none; border-radius: 30px; cursor: pointer; text-transform: uppercase;
-      box-shadow: 0 4px 15px rgba(255, 0, 85, 0.4);
-      display: none; /* Masqué tant que le chargement n'est pas fini */
+      color: white; background: #ff0055; border: none; border-radius: 30px; 
+      cursor: pointer; display: none; margin-top: 20px;
     }
-    .hidden { opacity: 0; pointer-events: none; }
+    .hidden { display: none !important; }
   </style>
 
   <script>
     // =================================================================
-    // 1. SHADER CHROMAKEY (FOND VERT)
+    // 1. SHADER CORRIGÉ POUR ANDROID (Precision Mediump)
     // =================================================================
     AFRAME.registerShader('chromakey', {
       schema: {
         src: {type: 'map'},
-        color: {default: {x: 0.0, y: 1.0, z: 0.0}, type: 'vec3', is: 'uniform'}, // Vert pur
-        transparent: {default: true, is: 'uniform'},
-        threshold: {default: 0.15, type: 'float', is: 'uniform'}, // Tolérance
-        smoothness: {default: 0.05, type: 'float', is: 'uniform'} // Douceur des bords
+        color: {default: {x: 0.0, y: 1.0, z: 0.0}, type: 'vec3', is: 'uniform'},
+        threshold: {default: 0.15, type: 'float', is: 'uniform'},
+        smoothness: {default: 0.05, type: 'float', is: 'uniform'}
       },
       init: function (data) {
         this.material = new THREE.ShaderMaterial({
@@ -50,12 +44,14 @@
             threshold: {type: 'f', value: data.threshold},
             smoothness: {type: 'f', value: data.smoothness}
           },
-          vertexShader: `
-            varying vec2 vUv;
-            void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-          `,
+          // AJOUT CRUCIAL : precision mediump float pour Android
           fragmentShader: `
-            uniform sampler2D texture; uniform vec3 color; uniform float threshold; uniform float smoothness; varying vec2 vUv;
+            precision mediump float;
+            uniform sampler2D texture;
+            uniform vec3 color;
+            uniform float threshold;
+            uniform float smoothness;
+            varying vec2 vUv;
             void main() {
               vec4 tex = texture2D(texture, vUv);
               float dist = distance(tex.rgb, color);
@@ -63,12 +59,16 @@
               gl_FragColor = vec4(tex.rgb, tex.a * alpha);
             }
           `,
+          vertexShader: `
+            varying vec2 vUv;
+            void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+          `,
           transparent: true
         });
-        this.update(data);
       },
       update: function (data) {
-        this.material.uniforms.texture.value = data.src;
+        // Note: On ne met pas à jour la texture ici via A-Frame, 
+        // c'est le composant smart-target qui va forcer la texture vidéo.
         this.material.uniforms.color.value.setRGB(data.color.x, data.color.y, data.color.z);
         this.material.uniforms.threshold.value = data.threshold;
         this.material.uniforms.smoothness.value = data.smoothness;
@@ -76,22 +76,41 @@
     });
 
     // =================================================================
-    // 2. COMPOSANT "SMART TARGET" (Le Cerveau)
+    // 2. COMPOSANT INTELLIGENT AVEC "FORCE VIDEO TEXTURE"
     // =================================================================
     AFRAME.registerComponent('smart-target', {
       init: function() {
         const el = this.el;
-        
-        // Récupération sécurisée des éléments média via Dataset
         this.video = el.dataset.videoId ? document.getElementById(el.dataset.videoId) : null;
         this.audio = el.dataset.audioId ? document.getElementById(el.dataset.audioId) : null;
+        this.plane = el.querySelector('a-entity[material]'); 
+        this.videoTexture = null;
 
-        // Événement : Cible Trouvée
-        el.addEventListener('targetFound', () => {
-          // console.log("Cible trouvée :", el.getAttribute('mindar-image-target').targetIndex);
+        // --- FORÇAGE DE LA TEXTURE VIDEO (LE FIX) ---
+        if (this.video && this.plane) {
+          // On crée manuellement une texture Three.js liée à la vidéo
+          this.videoTexture = new THREE.VideoTexture(this.video);
+          this.videoTexture.minFilter = THREE.LinearFilter;
+          this.videoTexture.magFilter = THREE.LinearFilter;
+          this.videoTexture.format = THREE.RGBAFormat;
           
+          // On injecte cette texture directement dans le Shader
+          const mesh = this.plane.getObject3D('mesh');
+          if (mesh) {
+            mesh.material.uniforms.texture.value = this.videoTexture;
+            mesh.material.needsUpdate = true;
+          } else {
+            // Si le mesh n'est pas encore prêt (timing), on attend un peu
+            this.plane.addEventListener('loaded', () => {
+              const m = this.plane.getObject3D('mesh');
+              m.material.uniforms.texture.value = this.videoTexture;
+            });
+          }
+        }
+
+        el.addEventListener('targetFound', () => {
           if (this.video) {
-            this.video.play(); // La vidéo reste muette (gérée par l'attribut muted)
+            this.video.play();
           }
           if (this.audio) {
             this.audio.currentTime = 0;
@@ -99,10 +118,7 @@
           }
         });
 
-        // Événement : Cible Perdue
         el.addEventListener('targetLost', () => {
-          // console.log("Cible perdue");
-          
           if (this.video) {
             this.video.pause();
           }
@@ -116,10 +132,9 @@
 </head>
 
 <body>
-
   <div id="overlay">
-    <button id="start-btn">Lancer l'expérience</button>
-    <div id="loading">Recherche des assets (0.mp4, 0.glb...)...</div>
+    <div id="loading">Chargement des assets...</div>
+    <button id="start-btn">DÉMARRER</button>
   </div>
 
   <a-scene 
@@ -130,147 +145,106 @@
     device-orientation-permission-ui="enabled: false">
 
     <a-assets id="assets-loader"></a-assets>
-
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
     <a-entity id="targets-container"></a-entity>
-
   </a-scene>
 
-
   <script>
-    // CONFIGURATION
-    const MAX_TARGETS = 10; // Nombre max d'images à vérifier (0 à 9)
+    // =================================================================
+    // 3. SCANNER D'ASSETS
+    // =================================================================
+    const MAX_TARGETS = 10;
     const ASSETS_PATH = './assets/';
-
     const assetsContainer = document.getElementById('assets-loader');
     const targetsContainer = document.getElementById('targets-container');
     const startBtn = document.getElementById('start-btn');
     const loadingText = document.getElementById('loading');
 
-    // Vérifie si un fichier existe (HEAD request)
     async function checkFileExists(url) {
-      try {
-        const response = await fetch(url, { method: 'HEAD' });
-        return response.ok;
-      } catch (error) { return false; }
+      try { return (await fetch(url, { method: 'HEAD' })).ok; } catch { return false; }
     }
 
     async function initExperience() {
-      let assetsCount = 0;
-
+      let count = 0;
       for (let i = 0; i < MAX_TARGETS; i++) {
-        const glbPath = `${ASSETS_PATH}${i}.glb`;
-        const mp3Path = `${ASSETS_PATH}${i}.mp3`;
-        const mp4Path = `${ASSETS_PATH}${i}.mp4`;
-
-        // Vérification parallèle
         const [hasGlb, hasMp3, hasMp4] = await Promise.all([
-          checkFileExists(glbPath), checkFileExists(mp3Path), checkFileExists(mp4Path)
+          checkFileExists(`${ASSETS_PATH}${i}.glb`),
+          checkFileExists(`${ASSETS_PATH}${i}.mp3`),
+          checkFileExists(`${ASSETS_PATH}${i}.mp4`)
         ]);
 
-        if (!hasGlb && !hasMp3 && !hasMp4) continue; // Rien trouvé pour cet index, on passe
+        if (!hasGlb && !hasMp3 && !hasMp4) continue;
+        count++;
 
-        assetsCount++;
-        
-        // Création de l'entité AR principale pour cet index
         const targetEl = document.createElement('a-entity');
         targetEl.setAttribute('mindar-image-target', `targetIndex: ${i}`);
-        targetEl.setAttribute('smart-target', ''); // Attache le contrôleur
         
-        // --- 1. AUDIO ---
+        // Audio
         if (hasMp3) {
-          const audioId = `audio-${i}`;
-          const audioTag = document.createElement('audio');
-          audioTag.setAttribute('id', audioId);
-          audioTag.setAttribute('src', mp3Path);
-          audioTag.setAttribute('preload', 'auto');
-          assetsContainer.appendChild(audioTag);
-          targetEl.dataset.audioId = audioId; // Lien Dataset
+          const audio = document.createElement('audio');
+          audio.id = `audio-${i}`;
+          audio.src = `${ASSETS_PATH}${i}.mp3`;
+          audio.preload = 'auto';
+          assetsContainer.appendChild(audio);
+          targetEl.dataset.audioId = audio.id;
         }
 
-        // --- 2. MODÈLE 3D (GLB) ---
+        // 3D Model
         if (hasGlb) {
-          const modelEl = document.createElement('a-entity');
-          modelEl.setAttribute('gltf-model', glbPath);
-          modelEl.setAttribute('rotation', '0 0 0');
-          modelEl.setAttribute('position', '0 0 0');
-          modelEl.setAttribute('scale', '0.5 0.5 0.5'); 
-          modelEl.setAttribute('animation-mixer', ''); // Animation auto
-          targetEl.appendChild(modelEl);
+          const model = document.createElement('a-entity');
+          model.setAttribute('gltf-model', `${ASSETS_PATH}${i}.glb`);
+          model.setAttribute('scale', '0.5 0.5 0.5');
+          model.setAttribute('animation-mixer', '');
+          targetEl.appendChild(model);
         }
 
-        // --- 3. VIDÉO (FOND VERT) ---
+        // Video
         if (hasMp4) {
-          const videoId = `video-${i}`;
+          const vidId = `video-${i}`;
+          const video = document.createElement('video');
+          video.id = vidId;
+          video.src = `${ASSETS_PATH}${i}.mp4`;
+          video.preload = 'auto';
+          video.loop = true;
+          // CONFIGURATION CRITIQUE POUR ANDROID
+          video.muted = true; 
+          video.setAttribute('muted', '');
+          video.setAttribute('playsinline', '');
+          video.setAttribute('webkit-playsinline', '');
+          video.setAttribute('crossorigin', 'anonymous');
+          assetsContainer.appendChild(video);
           
-          // Création Balise Vidéo (Crucial pour iOS : playsinline + muted)
-          const videoTag = document.createElement('video');
-          videoTag.setAttribute('id', videoId);
-          videoTag.setAttribute('src', mp4Path);
-          videoTag.setAttribute('preload', 'auto');
-          videoTag.setAttribute('loop', 'true');
-          videoTag.setAttribute('playsinline', '');
-          videoTag.setAttribute('webkit-playsinline', '');
-          videoTag.setAttribute('crossorigin', 'anonymous');
-          // Mute obligatoire pour autoplay visuel
-          videoTag.muted = true; 
-          videoTag.setAttribute('muted', ''); 
-          
-          assetsContainer.appendChild(videoTag);
-          targetEl.dataset.videoId = videoId; // Lien Dataset
+          targetEl.dataset.videoId = vidId;
 
-          // Création Plan 3D
-          const planeEl = document.createElement('a-entity');
-          // Ratio 16:9 standard (width 1 / height 0.56)
-          planeEl.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56'); 
-          planeEl.setAttribute('position', '0 0.1 0');
-          // Shader Chromakey
-          planeEl.setAttribute('material', `shader: chromakey; src: #${videoId}; color: 0 1 0; threshold: 0.01; smoothness: 0.05;`);
-          
-          targetEl.appendChild(planeEl);
+          const plane = document.createElement('a-entity');
+          // On n'assigne PAS de src ici pour ne pas embrouiller A-Frame
+          // Le composant smart-target va injecter la texture manuellement
+          plane.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56');
+          plane.setAttribute('position', '0 0.1 0');
+          plane.setAttribute('material', `shader: chromakey; color: 0 1 0; threshold: 0.15; smoothness: 0.1;`);
+          targetEl.appendChild(plane);
         }
 
+        // Ajout du composant Smart Target APRES avoir tout configuré
+        targetEl.setAttribute('smart-target', '');
         targetsContainer.appendChild(targetEl);
       }
 
-      // Fin du chargement
       loadingText.style.display = 'none';
-      if (assetsCount > 0) {
-        startBtn.style.display = 'block';
-      } else {
-        loadingText.style.display = 'block';
-        loadingText.innerText = "Aucun fichier trouvé (0.glb, 0.mp4...) dans /assets";
-      }
+      if (count > 0) startBtn.style.display = 'block';
+      else { loadingText.style.display = 'block'; loadingText.innerText = "Aucun asset trouvé."; }
     }
 
-    // Lancer l'initialisation
     initExperience();
 
-    // =================================================================
-    // 4. GESTION DU BOUTON START (WARM-UP)
-    // =================================================================
     startBtn.addEventListener('click', () => {
       document.getElementById('overlay').classList.add('hidden');
-      
-      // ASTUCE : On lance brièvement tous les médias pour les débloquer sur mobile
-      const allMedia = document.querySelectorAll('video, audio');
-      allMedia.forEach(media => {
-        // On s'assure qu'ils sont prêts
-        if(media.tagName === 'VIDEO') media.muted = true; 
-        
-        const playPromise = media.play();
-        if (playPromise !== undefined) {
-          playPromise.then(_ => {
-            media.pause(); // On met en pause immédiatement
-            media.currentTime = 0;
-          }).catch(error => console.log("Erreur init média:", error));
-        }
+      // Warm-up des vidéos
+      document.querySelectorAll('video').forEach(v => {
+        v.play().then(() => v.pause()).catch(e => console.error(e));
       });
-
-      // Démarrage du moteur MindAR
-      const arSystem = document.querySelector('a-scene').systems['mindar-image-system'];
-      if(arSystem) arSystem.start();
+      // Start MindAR
+      document.querySelector('a-scene').systems['mindar-image-system'].start();
     });
   </script>
 </body>
