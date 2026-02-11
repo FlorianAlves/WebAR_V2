@@ -226,7 +226,7 @@
           planeEl.setAttribute('geometry', 'primitive: plane; width: 1; height: 0.56'); 
           planeEl.setAttribute('position', '0 0.1 0');
           // Shader Chromakey
-          planeEl.setAttribute('material', `shader: chromakey; src: #${videoId}; color: 0 1 0; threshold: 0.15; smoothness: 0.05;`);
+          planeEl.setAttribute('material', `shader: chromakey; src: #${videoId}; color: 0 1 0; threshold: 0.01; smoothness: 0.05;`);
           
           targetEl.appendChild(planeEl);
         }
