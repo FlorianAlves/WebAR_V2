@@ -1,6 +1,6 @@
 # WebAR_V2
 
-# 📱 Modèle WebAR Optimisé (MindAR + A-Frame)
+# Modèle WebAR (MindAR + A-Frame)
 
 Ce projet est un template de **Réalité Augmentée sur le Web (WebAR)**. Il permet de détecter des images physiques (posters, cartes, photos) et d'afficher par-dessus du contenu multimédia (Vidéos sur fond vert, Audio, Modèles 3D) sans installer d'application.
 
